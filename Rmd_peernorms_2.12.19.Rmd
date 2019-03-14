@@ -1,0 +1,383 @@
+---
+title: "Peernorms"
+author: "Emmy Green"
+date: "11/29/2018"
+output: word_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(modelr)
+library(ggplot2)
+library(dplyr)
+library(forcats)
+library(lme4)
+library(devtools)
+library(MASS)
+library(nnet)
+library(citr)
+library(RefManageR)
+library(survival)
+library(survminer)
+library(car)
+library(brms)
+library(plyr)
+library(effects)
+library(broom)
+library(purrr)
+library(car)
+library(gee)
+library(geepack)
+library(lavaan)
+library(psych)
+library(mediation)
+
+```
+#Calling the Data
+```{r,include=FALSE}
+
+#Call from choose
+peernorms<-read.csv(file.choose())
+
+```
+
+```{r, include=FALSE}
+
+#Data frames
+
+#Drop kids
+peernorms<-peernorms%>% 
+  filter(drop==0)
+
+#Define age_exact as numeric variable
+peernorms$age_exact<-as.numeric(peernorms$age_exact)
+
+#Define gender as categorical variable
+peernorms$gender <- as.factor(peernorms$gender)
+
+#Define race as categorical variable
+peernorms$racecode<-factor(peernorms$racecode, levels = c(0, 1))
+
+#Relabel race cateogry labels
+peernorms$racecode<-revalue(peernorms$racecode, c("0" = "White", "1" = "Minority"))
+
+#Define condition as categorical
+peernorms$condition <-factor(peernorms$condition, levels = c("0", "1"))
+
+#Relabel condition labels
+peernorms$condition <-revalue(peernorms$condition, c("0" = "control", "1" = "friendship"))
+
+#Defining neighborhood as numeric 
+peernorms$neighborhoodbg<-as.numeric(peernorms$neighborhoodbg)
+peernorms$neighborhoodbb<-as.numeric(peernorms$neighborhoodbb)
+peernorms$neighborhoodwg<-as.numeric(peernorms$neighborhoodwg)
+peernorms$neighborhoodwb<-as.numeric(peernorms$neighborhoodwb)
+
+## Creating composite variables
+
+#Attitudes towards black target (rescaled to be 1-6; higher means positive about black)
+peernorms<-peernorms%>%
+  mutate(attitude_black = (likebg + likebb + nicebg + nicebb)/4)
+
+#Attitudes towards White target (rescaled to be 1-6; higher means positive about white)
+peernorms<-peernorms%>%
+  mutate(attitude_white = (likewg + likewb + nicewg + nicewb)/4) 
+
+#ProWhite bias (scale: -5 to 5; positive number means bias towards whites)
+peernorms<-peernorms%>%
+  mutate(pro_white_bias = (attitude_white - attitude_black))
+
+#ProWhite bias - GENDER INGROUP (scale: -10 to 10; positive number means bias towards whites)
+peernorms<-peernorms%>%
+  mutate(prowhitebias_gingroup = ((likeingroupw + niceingroupw) - (likeingroupb + niceingroupb)))
+
+#ProWhite bias - GENDER OUTGROUP (scale: -10 to 10; positive number means bias towards whites)
+peernorms<-peernorms%>%
+  mutate(prowhitebias_goutgroup = ((likeoutgroupw + niceoutgroupw) - (likeoutgroupb + niceoutgroupb)))
+
+#Creating Neighborhood Diversity (scale: higher means more likely to see black than white)
+peernorms<-peernorms%>%
+  mutate(neighborhood = (neighborhoodbg + neighborhoodbb) - (neighborhoodwg + neighborhoodwb))
+
+#Creating similar variable
+peernorms<- peernorms%>%
+  mutate(similar= (similarities1 + similarities2 + similarities3 + similarities4)/4)
+
+#Creating the expectations for helpful behavior variable:
+peernorms<- peernorms%>%
+  mutate(expectations_helpful= (expectations_white + expectations_black)/2)
+
+#Creating the peer norms variable:
+peernorms<- peernorms%>%
+  mutate(norms= (norms_white +norms_black)/2)
+
+#Set Neighborhood Diveresity as numeric variable
+peernorms$neighborhood<-as.numeric(peernorms$neighborhood)
+
+#Centering age_exact ## not working- turning my column into NAs
+peernorms<-peernorms%>%
+  mutate(age_exactc = (age_exact - (mean(age_exact))))
+
+#Centering Neighborhood Diversity
+peernorms$neighborhoodc<-scale(peernorms$neighborhood,center=TRUE,scale=FALSE)
+
+```
+
+#Analyses
+
+```{r, include=FALSE}
+
+## Frequencies 
+N=xtabs(~ condition + gender, peernorms)
+N
+N=xtabs(~ condition, peernorms)
+N
+N=xtabs(~ racecode + condition, peernorms)
+
+mean(peernorms$age_exact)
+SD(peernorms$age_exact)
+
+##Descriptives
+#Comparing means by condition
+
+aggregate(peernorms$similar~peernorms$condition,FUN=mean)
+aggregate(peernorms$attitude_black~peernorms$condition,FUN=mean)
+aggregate(peernorms$expectations_friend~peernorms$condition,FUN=mean)
+aggregate(peernorms$expectations_black~peernorms$condition,FUN=mean)
+aggregate(peernorms$expectations_white~peernorms$condition,FUN=mean)
+aggregate(peernorms$expectations_helpful~peernorms$condition,FUN=mean)
+aggregate(peernorms$norms~peernorms$condition,FUN=mean)
+aggregate(peernorms$you_friends~peernorms$condition,FUN=mean)
+
+aggregate(peernorms$similar~peernorms$condition,FUN=SD)
+aggregate(peernorms$attitude_black~peernorms$condition,FUN=SD)
+aggregate(peernorms$expectations_friend~peernorms$condition,FUN=SD)
+aggregate(peernorms$expectations_black~peernorms$condition,FUN=SD)
+aggregate(peernorms$expectations_white~peernorms$condition,FUN=SD)
+aggregate(peernorms$norms~peernorms$condition,FUN=SD)
+aggregate(peernorms$expectations_helpful~peernorms$condition,FUN=SD)
+aggregate(peernorms$you_friends~peernorms$condition,FUN=SD)
+
+aggregate(cbind(peernorms$similar,peernorms$attitude_black,peernorms$expectations_friend) ~ peernorms$condition, FUN=mean) 
+```
+
+```{r, include = FALSE}
+#LM ATB When age is in model, everything is N.S. Without age, race is marginal
+attitudemod<-lm(attitude_black ~ racecode * age_exact, data = peernorms)
+attitudemod_summary<-as.data.frame(coef(summary(attitudemod)))
+
+summary (attitudemod)
+#ANOVA
+Anova(attitudemod)
+
+#ATB and race, condition (friendship or control)
+attitudemod2<-lm(attitude_black~racecode*condition, data= peernorms)
+attitudemod2_summary <-as.data.frame(coef(summary(attitudemod2)))
+
+summary(attitudemod2)
+
+#ATB and condition (friendship or control)
+attitudemod3<-lm(attitude_black~condition, data= peernorms)
+attitudemod3_summary <-as.data.frame(coef(summary(attitudemod3)))
+
+summary(attitudemod3)
+
+meanattitude2<-effect("racecode*condition",attitudemod2)
+meanattitude2<-as.data.frame(meanattitude2)
+meanattitude2
+
+#ANOVA
+Anova(attitudemod2)
+
+##Figure attitudes
+attitudesfigure1<-ggplot(peernorms, mapping = aes(x=racecode, y=attitude_black, fill = condition)) +
+  geom_boxplot() + 
+ geom_jitter(shape = .25) +
+  ylim(1, 6) +
+  scale_color_manual(values = c("red", "blue", "purple"))+
+  theme_bw() +
+  labs(x="Condition", y="Children's Attitudes Towards the Black Targets")
+
+attitudesfigure1
+```
+
+```{r, include = FALSE}
+#LM Pro White Bias
+pro_white_mod<-lm(pro_white_bias ~ racecode, data = peernorms)
+pro_white_mod_summary<-as.data.frame(coef(summary(pro_white_mod)))
+
+summary (pro_white_mod)
+
+#ANOVA
+Anova(pro_white_mod)
+
+#Pro white and condition
+pro_white_mod2<-lm(pro_white_bias ~racecode*condition, data = peernorms)
+pro_white_mod2_summary<-as.data.frame(coef(summary(pro_white_mod2)))
+
+summary(pro_white_mod2)
+
+##Figure pro white bias
+prowhitefigure<-ggplot(peernorms, mapping = aes(x=condition, y=attitude_white, fill = race)) +
+  geom(boxplot) + 
+  geom_jitter(shape = 1) +
+  ylim(1, 6) +
+  scale_color_manual(values = c("red", "blue", "purple"))+
+  theme_bw() +
+  labs(x="Condition", y="Children's Pro-White Bias")
+
+prowhitefigure
+```
+```{r, include = FALSE}
+#expectations
+expectations_friend_mod<- lm(expectations_friend ~racecode*condition, data=peernorms)
+expectations_friend_mod_summary<-as.data.frame(coef(summary(expectations_friend_mod)))
+summary(expectations_friend_mod)
+
+expectations_friend_mod2<- lm(expectations_friend ~condition, data=peernorms)
+expectations_friend_mod2_summary<-as.data.frame(coef(summary(expectations_friend_mod2)))
+summary(expectations_friend_mod2)
+
+expectations_white_mod<- lm(expectations_white ~condition, data=peernorms)
+expectations_white_mod_summary<-as.data.frame(coef(summary(expectations_white_mod)))
+summary(expectations_white_mod)
+
+expectations_black_mod<- lm(expectations_black ~condition, data=peernorms)
+expectations_black_mod_summary<-as.data.frame(coef(summary(expectations_black_mod)))
+summary(expectations_black_mod)
+
+expectations_helpful_mod<- lm(expectations_helpful~ condition, data= peernorms)
+expectations_helpful_summary<-as.data.frame(coef(summary(expectations_helpful_mod)))
+summary(expectations_helpful_mod)
+
+expectations_helpful_mod2<- lm(expectations_helpful~ racecode* condition, data= peernorms)
+expectations_helpful_summary<-as.data.frame(coef(summary(expectations_helpful_mod2)))
+summary(expectations_helpful_mod2)
+```
+```{r, include = FALSE}
+#similarity
+
+similar_mod <- lm(similar ~ condition, data=peernorms)
+similar_mod_summary<-as.data.frame(coef(summary(similar_mod)))
+summary(similar_mod)
+
+similar_mod <- lm(similar ~ racecode*condition, data=peernorms)
+similar_mod_summary<-as.data.frame(coef(summary(similar_mod)))
+summary(similar_mod)
+```
+
+```{r, include = FALSE}
+#norms
+norms_white_mod <- lm(norms_white ~ condition, data=peernorms)
+norms_white_mod_summary<-as.data.frame(coef(summary(norms_white_mod)))
+summary(norms_white_mod)
+
+norms_black_mod <- lm(norms_black ~ condition, data=peernorms)
+norms_black_mod_summary<-as.data.frame(coef(summary(norms_black_mod)))
+summary(norms_black_mod)
+
+norms_mod <- lm(norms ~condition, data=peernorms)
+norms_mod_summary<-as.data.frame(coef(summary(norms_mod)))
+summary(norms_mod)
+
+norms_mod2 <- lm(norms ~racecode*condition, data=peernorms)
+norms_mod2_summary<-as.data.frame(coef(summary(norms_mod2)))
+summary(norms_mod2)
+
+norms_you_mod<- lm(you_friends ~ racecode*condition, data=peernorms)
+norms_you_mod_summary<-as.data.frame(coef(summary(norms_you_mod)))
+summary(norms_you_mod)
+```
+
+```{r, include = FALSE}
+#Mediation analyses 
+
+#Expectations of friendship as a mediator 
+
+peernorms<-peernorms
+na.omit(peernorms,cols=c(“condition”,“expectations_friend”,“attitude_black”))
+
+sem1<- “# a path
+expectations_friend ~ a*condition  #mediator as a function of IV
+
+ #b path
+attitude_black ~ b*expectations_friend  #DV as a function of mediator
+
+ #c’path
+attitude_black ~ cp*condition  #c-prime path aka DV as function of IV
+
+ ab := a*b
+ total := cp + ab”
+
+set.seed(1234)
+
+sem1<-sem(sem1,data=peernorms,se=“bootstrap”,bootstrap = 1000)
+summary(sem1,standardized=TRUE)
+
+#Expectations of helpful behavior as a mediator 
+
+peernorms<-peernorms
+na.omit(peernorms,cols=c(“condition”,“expectations_helpful”,“attitude_black”))
+
+sem2<- “# a path
+expectations_helpful ~ a*condition  #mediator as a function of IV
+
+ #b path
+attitude_black ~ b*expectations_helpful  #DV as a function of mediator
+
+ #c’path
+attitude_black ~ cp*condition  #c-prime path aka DV as function of IV
+
+ ab := a*b
+ total := cp + ab”
+
+set.seed(1234)
+
+sem2<-sem(sem1,data=peernorms,se=“bootstrap”,bootstrap = 1000)
+summary(sem1,standardized=TRUE)
+
+#Expectations of perceived similarity as a mediator 
+
+peernorms<-peernorms
+na.omit(peernorms,cols=c(“condition”,“similar”,“attitude_black”))
+
+sem3<- “# a path
+similar ~ a*condition  #mediator as a function of IV
+
+ #b path
+attitude_black ~ b*similar  #DV as a function of mediator
+
+ #c’path
+attitude_black ~ cp*condition  #c-prime path aka DV as function of IV
+
+ ab := a*b
+ total := cp + ab”
+
+set.seed(1234)
+
+sem3<-sem(sem1,data=peernorms,se=“bootstrap”,bootstrap = 1000)
+summary(sem1,standardized=TRUE)
+
+#Expectations of peer norms as a mediator 
+
+peernorms<-peernorms
+na.omit(peernorms,cols=c(“condition”,“norms”,“attitude_black”))
+
+sem4<- “# a path
+norms~ a*condition  #mediator as a function of IV
+
+ #b path
+attitude_black ~ b*norms  #DV as a function of mediator
+
+ #c’path
+attitude_black ~ cp*condition  #c-prime path aka DV as function of IV
+
+ ab := a*b
+ total := cp + ab”
+
+set.seed(1234)
+
+sem4<-sem(sem1,data=peernorms,se=“bootstrap”,bootstrap = 1000)
+summary(sem1,standardized=TRUE)
+
